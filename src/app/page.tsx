@@ -38,6 +38,10 @@ type SoundName =
 
 type PlaySound = (sound: SoundName) => void;
 
+type StartRunResponse =
+  | { ok: true; status: number; playerName: string; date: string }
+  | { ok: false; status: number; message: string; run?: RunResult };
+
 const demoScores: PublicScore[] = [
   { name: "Mira", streak: 17, bestStreak: 21, score: 480, wins: 68, losses: 27 },
   { name: "Jax", streak: 11, bestStreak: 13, score: 420, wins: 61, losses: 34 },
@@ -88,6 +92,7 @@ export default function Home() {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [activeDate, setActiveDate] = useState("");
 
   const today = todayKey();
   const activeGameId = order[activeIndex];
@@ -148,7 +153,7 @@ export default function Home() {
       .slice(0, 8);
   }, [save]);
 
-  function handleNameSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleNameSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const cleanName = sanitizePlayerName(nameInput);
 
@@ -158,25 +163,64 @@ export default function Home() {
     }
 
     playSound("button");
+    setMessage("Checking today's chance...");
+
+    const startResponse = await fetch("/api/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ playerName: cleanName })
+    }).catch(() => null);
+
+    if (!startResponse) {
+      setMessage("Could not verify today's chance. Try again in a moment.");
+      return;
+    }
+
+    const startData = (await startResponse.json().catch(() => null)) as StartRunResponse | null;
+
+    if (!startData) {
+      setMessage("Could not read the daily chance response.");
+      return;
+    }
+
     const userRunDate = window.localStorage.getItem(USER_RUN_DATE_KEY);
     const userRunResult = loadUserRunResult();
     const loaded = loadPlayerSave(cleanName);
     setDisplayName(cleanName);
     setSave(loaded);
-    setLastRun(userRunResult);
     setMessage("");
 
-    if (userRunDate === today && userRunResult) {
+    if (!startData.ok) {
+      if (startData.run) {
+        setLastRun(startData.run);
+        setActiveDate(startData.run.date);
+        window.localStorage.setItem(USER_RUN_DATE_KEY, startData.run.date);
+        window.localStorage.setItem(USER_RUN_RESULT_KEY, JSON.stringify(startData.run));
+        setScreen("final");
+        return;
+      }
+
+      if (userRunDate === today && userRunResult) {
+        setLastRun(userRunResult);
+        setActiveDate(userRunResult.date);
+        setScreen("final");
+        return;
+      }
+
+      setMessage(startData.message);
+      return;
+    }
+
+    if (userRunDate === startData.date && userRunResult) {
+      setLastRun(userRunResult);
+      setActiveDate(userRunResult.date);
       setScreen("final");
       return;
     }
 
-    if (userRunDate === today) {
-      setMessage("Today's chance was already used on this browser.");
-      return;
-    }
-
-    setOrder(randomizeGameOrder(`${today}:${cleanName}`));
+    setLastRun(null);
+    setActiveDate(startData.date);
+    setOrder(randomizeGameOrder(`${startData.date}:${cleanName}`));
     setActiveIndex(0);
     setResults([]);
     setScreen("game");
@@ -202,9 +246,10 @@ export default function Home() {
     const perfectRun = totalWins === runResults.length;
     const streakAfter = perfectRun ? save.streak + 1 : 0;
     const score = totalWins * 100 - totalLosses * 25 + streakAfter * 25;
+    const runDate = activeDate || today;
     const run: RunResult = {
       playerName: save.playerName,
-      date: today,
+      date: runDate,
       order,
       games: runResults,
       totalWins,
@@ -219,7 +264,7 @@ export default function Home() {
     };
 
     setSave((current) => {
-      if (!current || current.lastPlayed === today) return current;
+      if (!current || current.lastPlayed === runDate) return current;
 
       return {
         ...current,
@@ -227,13 +272,13 @@ export default function Home() {
         bestStreak: Math.max(current.bestStreak, streakAfter),
         totalWins: current.totalWins + totalWins,
         totalLosses: current.totalLosses + totalLosses,
-        lastPlayed: today,
+        lastPlayed: runDate,
         history: [run, ...current.history].slice(0, 20)
       };
     });
     setLastRun(run);
     setScreen("final");
-    window.localStorage.setItem(USER_RUN_DATE_KEY, today);
+    window.localStorage.setItem(USER_RUN_DATE_KEY, runDate);
     window.localStorage.setItem(USER_RUN_RESULT_KEY, JSON.stringify(run));
     playSound("final");
 
