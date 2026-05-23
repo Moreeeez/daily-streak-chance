@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   dealBaccarat,
   formatCountdown,
@@ -42,11 +42,9 @@ type StartRunResponse =
   | { ok: true; status: number; playerName: string; date: string }
   | { ok: false; status: number; message: string; run?: RunResult };
 
-const demoScores: PublicScore[] = [
-  { name: "Mira", streak: 17, bestStreak: 21, score: 480, wins: 68, losses: 27 },
-  { name: "Jax", streak: 11, bestStreak: 13, score: 420, wins: 61, losses: 34 },
-  { name: "Nova", streak: 8, bestStreak: 12, score: 360, wins: 54, losses: 31 }
-];
+type LeaderboardResponse = {
+  leaderboard?: PublicScore[];
+};
 
 function defaultSave(playerName: string): PlayerSave {
   return { playerName, streak: 0, bestStreak: 0, totalWins: 0, totalLosses: 0, history: [] };
@@ -93,6 +91,8 @@ export default function Home() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [muted, setMuted] = useState(false);
   const [activeDate, setActiveDate] = useState("");
+  const [leaderboard, setLeaderboard] = useState<PublicScore[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
 
   const today = todayKey();
   const activeGameId = order[activeIndex];
@@ -136,22 +136,24 @@ export default function Home() {
     [muted]
   );
 
-  const leaderboard = useMemo(() => {
-    const playerScore: PublicScore | null = save
-      ? {
-          name: save.playerName,
-          streak: save.streak,
-          bestStreak: save.bestStreak,
-          score: save.history[0]?.score ?? 0,
-          wins: save.totalWins,
-          losses: save.totalLosses
-        }
-      : null;
+  const refreshLeaderboard = useCallback(async () => {
+    setLeaderboardLoading(true);
+    const response = await fetch("/api/leaderboard", { cache: "no-store" }).catch(() => null);
+    const data = response ? ((await response.json().catch(() => null)) as LeaderboardResponse | null) : null;
+    setLeaderboard(Array.isArray(data?.leaderboard) ? data.leaderboard : []);
+    setLeaderboardLoading(false);
+  }, []);
 
-    return [...(playerScore ? [playerScore] : []), ...demoScores]
-      .sort((a, b) => b.score - a.score || b.streak - a.streak)
-      .slice(0, 8);
-  }, [save]);
+  function handleToggleLeaderboard() {
+    playSound("button");
+    setShowLeaderboard((visible) => {
+      if (!visible) {
+        void refreshLeaderboard();
+      }
+
+      return !visible;
+    });
+  }
 
   async function handleNameSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -288,6 +290,7 @@ export default function Home() {
       body: JSON.stringify(run)
     }).catch(() => undefined);
 
+    await refreshLeaderboard();
     setIsSubmitting(false);
   }
 
@@ -327,10 +330,10 @@ export default function Home() {
         <FinalScene
           countdown={countdown}
           leaderboard={leaderboard}
+          leaderboardLoading={leaderboardLoading}
           run={lastRun}
           showLeaderboard={showLeaderboard}
-          playSound={playSound}
-          onToggleLeaderboard={() => setShowLeaderboard((visible) => !visible)}
+          onToggleLeaderboard={handleToggleLeaderboard}
         />
       ) : null}
     </main>
@@ -759,16 +762,16 @@ function suitSymbol(suit: PlayingCard["suit"]) {
 function FinalScene({
   countdown,
   leaderboard,
+  leaderboardLoading,
   run,
   showLeaderboard,
-  playSound,
   onToggleLeaderboard
 }: {
   countdown: number;
   leaderboard: PublicScore[];
+  leaderboardLoading: boolean;
   run: RunResult;
   showLeaderboard: boolean;
-  playSound: PlaySound;
   onToggleLeaderboard: () => void;
 }) {
   const message = run.totalWins === 5
@@ -789,21 +792,29 @@ function FinalScene({
       </div>
       <p className="daily-message">{message}</p>
       <div className="final-actions">
-        <button onClick={() => {
-          playSound("button");
-          onToggleLeaderboard();
-        }}>{showLeaderboard ? "Hide Leaderboard" : "Leaderboard"}</button>
+        <button onClick={onToggleLeaderboard}>{showLeaderboard ? "Hide Leaderboard" : "Leaderboard"}</button>
         <span>Play again in {formatCountdown(countdown)}</span>
       </div>
       {showLeaderboard ? (
         <ol className="leaderboard-list">
-          {leaderboard.map((score) => (
-            <li key={`${score.name}-${score.score}`}>
-              <span>{score.name}</span>
-              <strong>{score.score}</strong>
-              <small>{score.streak} streak</small>
+          {leaderboardLoading ? (
+            <li>
+              <span>Loading global scores...</span>
             </li>
-          ))}
+          ) : leaderboard.length ? (
+            leaderboard.map((score) => (
+              <li key={`${score.name}-${score.score}`}>
+                <span>{score.name}</span>
+                <strong>{score.score}</strong>
+                <small>{score.streak} streak</small>
+              </li>
+            ))
+          ) : (
+            <li>
+              <span>No global scores yet</span>
+              <small>Finish a run to appear here.</small>
+            </li>
+          )}
         </ol>
       ) : null}
     </section>

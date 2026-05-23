@@ -14,12 +14,6 @@ type DailyLock = {
   run?: RunResult;
 };
 
-const demoScores: PublicScore[] = [
-  { name: "Mira", streak: 17, bestStreak: 21, score: 480, wins: 68, losses: 27 },
-  { name: "Jax", streak: 11, bestStreak: 13, score: 420, wins: 61, losses: 34 },
-  { name: "Nova", streak: 8, bestStreak: 12, score: 360, wins: 54, losses: 31 }
-];
-
 const memoryRuns = new Map<string, StoredRun>();
 const memoryPlayers = new Map<string, PublicScore>();
 const memoryLocks = new Map<string, DailyLock>();
@@ -100,9 +94,8 @@ export async function startDailyRun(payload: unknown, ipHash: string) {
 
 export async function getLeaderboard() {
   const liveScores = await getStoredScores();
-  const scores = liveScores.length ? liveScores : demoScores;
 
-  return scores.sort((a, b) => b.score - a.score || b.streak - a.streak).slice(0, 25);
+  return liveScores.sort((a, b) => b.score - a.score || b.streak - a.streak).slice(0, 25);
 }
 
 export async function getGlobalStats(): Promise<GlobalStats> {
@@ -113,11 +106,11 @@ export async function getGlobalStats(): Promise<GlobalStats> {
 
   if (!completedRuns.length) {
     return {
-      runs: 1387,
-      miniGames: 6935,
-      wins: 3712,
-      losses: 3223,
-      averageScore: 318
+      runs: 0,
+      miniGames: 0,
+      wins: 0,
+      losses: 0,
+      averageScore: 0
     };
   }
 
