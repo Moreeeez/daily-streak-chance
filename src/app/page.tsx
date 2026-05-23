@@ -19,6 +19,8 @@ import type { GameId, MiniGameResult, PlayerSave, PlayingCard, PublicScore, RunR
 const SAVE_PREFIX = "daily-one-chance-player";
 const NAME_KEY = "daily-one-chance-name";
 const MUTE_KEY = "daily-one-chance-muted";
+const USER_RUN_DATE_KEY = "daily-streak-chance-user-run-date";
+const USER_RUN_RESULT_KEY = "daily-streak-chance-user-run-result";
 
 type SoundName =
   | "button"
@@ -58,6 +60,17 @@ function loadPlayerSave(playerName: string): PlayerSave {
     return { ...defaultSave(playerName), ...(JSON.parse(saved) as PlayerSave), playerName };
   } catch {
     return defaultSave(playerName);
+  }
+}
+
+function loadUserRunResult() {
+  const saved = window.localStorage.getItem(USER_RUN_RESULT_KEY);
+  if (!saved) return null;
+
+  try {
+    return JSON.parse(saved) as RunResult;
+  } catch {
+    return null;
   }
 }
 
@@ -145,11 +158,23 @@ export default function Home() {
     }
 
     playSound("button");
+    const userRunDate = window.localStorage.getItem(USER_RUN_DATE_KEY);
+    const userRunResult = loadUserRunResult();
     const loaded = loadPlayerSave(cleanName);
     setDisplayName(cleanName);
     setSave(loaded);
-    setLastRun(null);
+    setLastRun(userRunResult);
     setMessage("");
+
+    if (userRunDate === today && userRunResult) {
+      setScreen("final");
+      return;
+    }
+
+    if (userRunDate === today) {
+      setMessage("Today's chance was already used on this browser.");
+      return;
+    }
 
     setOrder(randomizeGameOrder(`${today}:${cleanName}`));
     setActiveIndex(0);
@@ -208,6 +233,8 @@ export default function Home() {
     });
     setLastRun(run);
     setScreen("final");
+    window.localStorage.setItem(USER_RUN_DATE_KEY, today);
+    window.localStorage.setItem(USER_RUN_RESULT_KEY, JSON.stringify(run));
     playSound("final");
 
     await fetch("/api/play", {
