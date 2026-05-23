@@ -315,7 +315,7 @@ const keys = {
   runPrefix: "dsc:run",
   dailyRunsPrefix: "dsc:daily-runs",
   playerPrefix: "dsc:player",
-  ipPrefix: "dsc:ip"
+  ipPrefix: "dsc:ip:v2"
 };
 
 function redisConfig() {
