@@ -1,14 +1,14 @@
-# Daily One Chance
+# Daily Streak Chance
 
-A polished luck-based web game where each player gets exactly one dramatic chance per day.
+A polished luck-based mini-game collection where the goal is to land a perfect 5-game winning streak.
 
 ## Features
 
-- One play per day with a daily reset countdown
-- Random game selection across five luck games
-- Streaks, wins, losses, leaderboard, and global stats
-- Rare events, suspense animations, and funny result messages
-- Mobile-friendly dark UI
+- Display-name entry before starting
+- One full run with all five mini games in randomized order
+- Real mini-game mechanics for Coin Flip, Rock Paper Scissors, Baccarat, Pick A Door, and Glitch Chambers
+- Perfect-run streaks, wins, losses, leaderboard, history, daily rank, and shareable results
+- Mobile-friendly arcade casino UI
 - Next.js App Router API structure prepared for Vercel KV / Upstash Redis
 
 ## Getting Started
@@ -22,4 +22,4 @@ Open `http://localhost:3000`.
 
 ## Deployment
 
-This project is ready for Vercel. Later, add Vercel KV or Upstash Redis credentials and replace the mock store in `src/lib/server/store.ts`.
+This project is ready for Vercel. Later, add Vercel KV or Upstash Redis credentials and replace the in-memory map in `src/lib/server/store.ts`.

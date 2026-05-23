@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { recordPlay } from "@/lib/server/store";
+import { recordRun } from "@/lib/server/store";
 
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
-  const saved = await recordPlay();
+  const saved = await recordRun(payload);
 
-  return NextResponse.json({ ...saved, received: payload });
+  return NextResponse.json(saved, { status: saved.status });
 }
