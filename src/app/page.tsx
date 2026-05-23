@@ -5,7 +5,6 @@ import {
   dealBaccarat,
   formatCountdown,
   getGame,
-  msUntilTomorrow,
   randomizeGameOrder,
   resolveChamber,
   resolveCoinFlip,
@@ -19,7 +18,7 @@ import type { GameId, MiniGameResult, PlayerSave, PlayingCard, PublicScore, RunR
 const SAVE_PREFIX = "daily-one-chance-player";
 const NAME_KEY = "daily-one-chance-name";
 const MUTE_KEY = "daily-one-chance-muted";
-const USER_RUN_DATE_KEY = "daily-streak-chance-user-run-date";
+const NEXT_ATTEMPT_KEY = "daily-streak-chance-next-attempt-at";
 const USER_RUN_RESULT_KEY = "daily-streak-chance-user-run-result";
 
 type SoundName =
@@ -39,8 +38,8 @@ type SoundName =
 type PlaySound = (sound: SoundName) => void;
 
 type StartRunResponse =
-  | { ok: true; status: number; playerName: string; date: string }
-  | { ok: false; status: number; message: string; run?: RunResult };
+  | { ok: true; status: number; playerName: string; date: string; nextAttemptAt: string }
+  | { ok: false; status: number; message: string; nextAttemptAt?: string; run?: RunResult };
 
 type LeaderboardResponse = {
   leaderboard?: PublicScore[];
@@ -76,6 +75,11 @@ function loadUserRunResult() {
   }
 }
 
+function msUntilTimestamp(timestamp: string) {
+  if (!timestamp) return 0;
+  return Math.max(0, new Date(timestamp).getTime() - Date.now());
+}
+
 export default function Home() {
   const [displayName, setDisplayName] = useState("");
   const [nameInput, setNameInput] = useState("");
@@ -91,6 +95,7 @@ export default function Home() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [muted, setMuted] = useState(false);
   const [activeDate, setActiveDate] = useState("");
+  const [nextAttemptAt, setNextAttemptAt] = useState("");
   const [leaderboard, setLeaderboard] = useState<PublicScore[]>([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
 
@@ -99,19 +104,20 @@ export default function Home() {
   const activeGame = activeGameId ? getGame(activeGameId) : null;
 
   useEffect(() => {
-    const updateCountdown = () => setCountdown(msUntilTomorrow());
+    const updateCountdown = () => setCountdown(msUntilTimestamp(nextAttemptAt));
     const firstTick = window.setTimeout(updateCountdown, 0);
     const timer = window.setInterval(updateCountdown, 1000);
     return () => {
       window.clearTimeout(firstTick);
       window.clearInterval(timer);
     };
-  }, []);
+  }, [nextAttemptAt]);
 
   useEffect(() => {
     const loadTimer = window.setTimeout(() => {
       setNameInput(sanitizePlayerName(window.localStorage.getItem(NAME_KEY) ?? ""));
       setMuted(window.localStorage.getItem(MUTE_KEY) === "true");
+      setNextAttemptAt(window.localStorage.getItem(NEXT_ATTEMPT_KEY) ?? "");
     }, 0);
 
     return () => window.clearTimeout(loadTimer);
@@ -185,7 +191,6 @@ export default function Home() {
       return;
     }
 
-    const userRunDate = window.localStorage.getItem(USER_RUN_DATE_KEY);
     const userRunResult = loadUserRunResult();
     const loaded = loadPlayerSave(cleanName);
     setDisplayName(cleanName);
@@ -196,13 +201,21 @@ export default function Home() {
       if (startData.run) {
         setLastRun(startData.run);
         setActiveDate(startData.run.date);
-        window.localStorage.setItem(USER_RUN_DATE_KEY, startData.run.date);
+        if (startData.nextAttemptAt) {
+          setNextAttemptAt(startData.nextAttemptAt);
+          window.localStorage.setItem(NEXT_ATTEMPT_KEY, startData.nextAttemptAt);
+        }
         window.localStorage.setItem(USER_RUN_RESULT_KEY, JSON.stringify(startData.run));
         setScreen("final");
         return;
       }
 
-      if (userRunDate === today && userRunResult) {
+      if (startData.nextAttemptAt) {
+        setNextAttemptAt(startData.nextAttemptAt);
+        window.localStorage.setItem(NEXT_ATTEMPT_KEY, startData.nextAttemptAt);
+      }
+
+      if (userRunResult) {
         setLastRun(userRunResult);
         setActiveDate(userRunResult.date);
         setScreen("final");
@@ -213,15 +226,10 @@ export default function Home() {
       return;
     }
 
-    if (userRunDate === startData.date && userRunResult) {
-      setLastRun(userRunResult);
-      setActiveDate(userRunResult.date);
-      setScreen("final");
-      return;
-    }
-
     setLastRun(null);
     setActiveDate(startData.date);
+    setNextAttemptAt(startData.nextAttemptAt);
+    window.localStorage.setItem(NEXT_ATTEMPT_KEY, startData.nextAttemptAt);
     setOrder(randomizeGameOrder(`${startData.date}:${cleanName}`));
     setActiveIndex(0);
     setResults([]);
@@ -280,7 +288,9 @@ export default function Home() {
     });
     setLastRun(run);
     setScreen("final");
-    window.localStorage.setItem(USER_RUN_DATE_KEY, runDate);
+    if (nextAttemptAt) {
+      window.localStorage.setItem(NEXT_ATTEMPT_KEY, nextAttemptAt);
+    }
     window.localStorage.setItem(USER_RUN_RESULT_KEY, JSON.stringify(run));
     playSound("final");
 
@@ -356,7 +366,7 @@ function NameScene({
   return (
     <section className="name-scene">
       <div className="brand-lockup">
-        <p>Next reset {formatCountdown(countdown)}</p>
+        <p>Your next run unlocks in {formatCountdown(countdown)}</p>
         <h1>Daily Streak Chance</h1>
       </div>
       <form className="name-form" onSubmit={onSubmit}>
@@ -778,7 +788,7 @@ function FinalScene({
     ? "Perfect 5-game streak. That one goes on the board."
     : run.totalWins >= 3
       ? "Close run. The streak wants a cleaner sweep tomorrow."
-      : "The table won this round. Reset, breathe, return.";
+      : "The table won this round. Recharge, breathe, return.";
 
   return (
     <section className="final-scene">
@@ -793,7 +803,7 @@ function FinalScene({
       <p className="daily-message">{message}</p>
       <div className="final-actions">
         <button onClick={onToggleLeaderboard}>{showLeaderboard ? "Hide Leaderboard" : "Leaderboard"}</button>
-        <span>Play again in {formatCountdown(countdown)}</span>
+        <span>Next attempt available in {formatCountdown(countdown)}</span>
       </div>
       {showLeaderboard ? (
         <ol className="leaderboard-list">

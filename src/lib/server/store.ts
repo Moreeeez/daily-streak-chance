@@ -8,12 +8,14 @@ type StoredRun = RunResult & {
 };
 
 type DailyLock = {
-  date: string;
+  lastAttemptAt: string;
+  nextAttemptAt: string;
   playerName: string;
   startedAt: string;
   run?: RunResult;
 };
 
+const cooldownMs = 24 * 60 * 60 * 1000;
 const memoryRuns = new Map<string, StoredRun>();
 const memoryPlayers = new Map<string, PublicScore>();
 const memoryLocks = new Map<string, DailyLock>();
@@ -55,41 +57,42 @@ export async function startDailyRun(payload: unknown, ipHash: string) {
     return { ok: false, status: 400, message: "Display name is too short." };
   }
 
-  const date = currentServerDate();
-  const existingLock = await getDailyLock(date, ipHash);
+  const now = new Date();
+  const attemptAt = now.toISOString();
+  const nextAttemptAt = new Date(now.getTime() + cooldownMs).toISOString();
+  const existingLock = await getDailyLock(ipHash);
 
-  if (existingLock?.run) {
+  if (existingLock && !canAttempt(existingLock, now)) {
     return {
       ok: false,
       status: 409,
-      message: "Today's chance was already completed from this connection.",
+      message: "Your next run is still locked.",
+      nextAttemptAt: existingLock.nextAttemptAt,
       run: existingLock.run
     };
   }
 
-  if (existingLock) {
-    return {
-      ok: false,
-      status: 409,
-      message: "Today's chance was already started from this connection."
-    };
-  }
-
-  const created = await createDailyLock(date, ipHash, {
-    date,
+  const lock: DailyLock = {
+    lastAttemptAt: attemptAt,
+    nextAttemptAt,
     playerName: safeName,
-    startedAt: new Date().toISOString()
-  });
+    startedAt: attemptAt
+  };
+
+  const created = existingLock ? await saveDailyLock(ipHash, lock) : await createDailyLock(ipHash, lock);
 
   if (!created) {
+    const latestLock = await getDailyLock(ipHash);
+
     return {
       ok: false,
       status: 409,
-      message: "Today's chance was already started from this connection."
+      message: "Your next run is still locked.",
+      nextAttemptAt: latestLock?.nextAttemptAt
     };
   }
 
-  return { ok: true, status: 200, playerName: safeName, date };
+  return { ok: true, status: 200, playerName: safeName, date: currentServerDate(now), nextAttemptAt };
 }
 
 export async function getLeaderboard() {
@@ -136,7 +139,8 @@ export async function recordRun(payload: unknown, ipHash?: string) {
     return { ok: false, status: 400, message: "Display name is too short." };
   }
 
-  const date = currentServerDate();
+  const now = new Date();
+  const date = currentServerDate(now);
   const completedRun: StoredRun = {
     ...run,
     date,
@@ -146,19 +150,25 @@ export async function recordRun(payload: unknown, ipHash?: string) {
   };
 
   if (ipHash) {
-    const existingLock = await getDailyLock(date, ipHash);
+    const existingLock = await getDailyLock(ipHash);
 
-    if (existingLock?.run) {
+    if (existingLock?.run && !canAttempt(existingLock, now)) {
       return {
         ok: false,
         status: 409,
-        message: "Today's chance was already completed from this connection.",
+        message: "Your next run is still locked.",
+        nextAttemptAt: existingLock.nextAttemptAt,
         run: existingLock.run
       };
     }
 
-    await saveDailyLock(date, ipHash, {
-      date,
+    const lastAttemptAt = existingLock?.lastAttemptAt ?? now.toISOString();
+    const nextAttemptAt =
+      existingLock?.nextAttemptAt ?? new Date(new Date(lastAttemptAt).getTime() + cooldownMs).toISOString();
+
+    await saveDailyLock(ipHash, {
+      lastAttemptAt,
+      nextAttemptAt,
       playerName: safeName,
       startedAt: existingLock?.startedAt ?? new Date().toISOString(),
       run: publicRun(completedRun)
@@ -168,7 +178,7 @@ export async function recordRun(payload: unknown, ipHash?: string) {
   const runKey = dailyRunKey(safeName, date);
 
   if (await hasRun(runKey)) {
-    return { ok: false, status: 409, message: "This player already submitted a run today." };
+    return { ok: false, status: 409, message: "This player already submitted a run for this date." };
   }
 
   await saveRun(runKey, completedRun);
@@ -241,27 +251,28 @@ async function updatePlayerScore(safeName: string, run: StoredRun) {
   await redisCommand("SADD", keys.players, safeName.toLowerCase());
 }
 
-async function getDailyLock(date: string, ipHash: string) {
+async function getDailyLock(ipHash: string) {
   if (!hasRedis()) {
-    return memoryLocks.get(ipLockKey(date, ipHash)) ?? null;
+    return memoryLocks.get(ipLockKey(ipHash)) ?? null;
   }
 
-  return getJson<DailyLock>(ipLockKey(date, ipHash));
+  return getJson<DailyLock>(ipLockKey(ipHash));
 }
 
-async function saveDailyLock(date: string, ipHash: string, lock: DailyLock) {
-  const key = ipLockKey(date, ipHash);
+async function saveDailyLock(ipHash: string, lock: DailyLock) {
+  const key = ipLockKey(ipHash);
 
   if (!hasRedis()) {
     memoryLocks.set(key, lock);
-    return;
+    return true;
   }
 
   await setJson(key, lock);
+  return true;
 }
 
-async function createDailyLock(date: string, ipHash: string, lock: DailyLock) {
-  const key = ipLockKey(date, ipHash);
+async function createDailyLock(ipHash: string, lock: DailyLock) {
+  const key = ipLockKey(ipHash);
 
   if (!hasRedis()) {
     if (memoryLocks.has(key)) return false;
@@ -290,8 +301,12 @@ function playerKey(name: string) {
   return `${keys.playerPrefix}:${name.toLowerCase()}`;
 }
 
-function ipLockKey(date: string, ipHash: string) {
-  return `${keys.ipPrefix}:${date}:${ipHash}`;
+function ipLockKey(ipHash: string) {
+  return `${keys.ipPrefix}:${ipHash}`;
+}
+
+function canAttempt(lock: DailyLock, now = new Date()) {
+  return new Date(lock.nextAttemptAt).getTime() <= now.getTime();
 }
 
 const keys = {
